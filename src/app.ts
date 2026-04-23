@@ -1,10 +1,12 @@
 import express from 'express'
+import cookieParser from 'cookie-parser'
 import { errorHandler } from './middleware/errorHandler.js'
 import authRouter from './routes/auth.route.js'
 
 export const app = express()
 
 app.use(express.json())
+app.use(cookieParser())
 
 app.get('/health', (_req, res) => {
   res.json({ success: true, message: 'Server is running' })

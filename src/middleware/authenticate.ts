@@ -1,24 +1,35 @@
 import type { Request, Response, NextFunction } from 'express'
-import { verifyToken } from '../lib/jwt.js'
+import { verifyAccessToken } from '../lib/jwt.js'
+import { UnauthorizedError, ForbiddenError } from '../types/errors.js'
 
 export interface AuthenticatedRequest extends Request {
   userId: string
+  role: string
 }
 
 export function authenticate(req: Request, res: Response, next: NextFunction): void {
-  const authHeader = req.headers.authorization
-  if (!authHeader?.startsWith('Bearer ')) {
-    res.status(401).json({ success: false, message: 'Unauthorized' })
-    return
-  }
-
-  const token = authHeader.split(' ')[1]
-
   try {
-    const payload = verifyToken(token)
+    const authHeader = req.headers.authorization
+    if (!authHeader?.startsWith('Bearer ')) throw new UnauthorizedError('No token provided')
+
+    const token = authHeader.split(' ')[1]
+    const payload = verifyAccessToken(token)
+
     ;(req as AuthenticatedRequest).userId = payload.userId
+    ;(req as AuthenticatedRequest).role = payload.role
     next()
-  } catch {
-    res.status(401).json({ success: false, message: 'Invalid or expired token' })
+  } catch (error) {
+    next(error)
+  }
+}
+
+export function authorize(...roles: string[]) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const role = (req as AuthenticatedRequest).role
+    if (!roles.includes(role)) {
+      next(new ForbiddenError('Insufficient permissions'))
+      return
+    }
+    next()
   }
 }
