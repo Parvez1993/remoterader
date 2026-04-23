@@ -17,6 +17,22 @@ async function startServer(): Promise<void> {
   })
 }
 
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception:', error)
+  process.exit(1)
+})
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason)
+  process.exit(1)
+})
+
+process.on('SIGTERM', async () => {
+  await prisma.$disconnect()
+  redis.disconnect()
+  process.exit(0)
+})
+
 startServer().catch((error) => {
   console.error('Failed to start server:', error)
   process.exit(1)
