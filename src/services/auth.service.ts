@@ -4,6 +4,7 @@ import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../lib/jw
 import { UnauthorizedError } from '../types/errors.js'
 import { handlePrismaError } from '../lib/prismaErrors.js'
 import type { RegisterInput, LoginInput } from '../validators/auth.validator.js'
+import type { Role } from '../types/roles.js'
 
 export async function registerUser(input: RegisterInput): Promise<{ accessToken: string }> {
   const passwordHash = await bcrypt.hash(input.password, 12)
@@ -12,7 +13,7 @@ export async function registerUser(input: RegisterInput): Promise<{ accessToken:
     const user = await prisma.user.create({
       data: { email: input.email, passwordHash },
     })
-    const accessToken = signAccessToken(user.id, user.role)
+    const accessToken = signAccessToken(user.id, user.role as Role)
     return { accessToken }
   } catch (error) {
     handlePrismaError(error)
@@ -26,7 +27,7 @@ export async function loginUser(input: LoginInput): Promise<{ accessToken: strin
   const isValid = await bcrypt.compare(input.password, user.passwordHash)
   if (!isValid) throw new UnauthorizedError('Invalid credentials')
 
-  const accessToken = signAccessToken(user.id, user.role)
+  const accessToken = signAccessToken(user.id, user.role as Role)
   const refreshToken = signRefreshToken(user.id)
 
   await prisma.user.update({
@@ -43,7 +44,7 @@ export async function refreshAccessToken(token: string): Promise<{ accessToken: 
   const user = await prisma.user.findUnique({ where: { id: payload.userId } })
   if (!user || user.refreshToken !== token) throw new UnauthorizedError('Invalid refresh token')
 
-  const accessToken = signAccessToken(user.id, user.role)
+  const accessToken = signAccessToken(user.id, user.role as Role)
   return { accessToken }
 }
 

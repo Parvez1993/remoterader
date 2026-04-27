@@ -1,10 +1,11 @@
 import type { Request, Response, NextFunction } from 'express'
 import { verifyAccessToken } from '../lib/jwt.js'
 import { UnauthorizedError, ForbiddenError } from '../types/errors.js'
+import type { Role } from '../types/roles.js'
 
 export interface AuthenticatedRequest extends Request {
   userId: string
-  role: string
+  role: Role
 }
 
 export function authenticate(req: Request, res: Response, next: NextFunction): void {
@@ -23,7 +24,7 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
   }
 }
 
-export function authorize(...roles: string[]) {
+export function authorize(...roles: Role[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const role = (req as AuthenticatedRequest).role
     if (!roles.includes(role)) {

@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express'
 import { registerSchema, loginSchema } from '../validators/auth.validator.js'
 import { registerUser, loginUser, refreshAccessToken, logoutUser } from '../services/auth.service.js'
 import type { AuthenticatedRequest } from '../middleware/authenticate.js'
+import { UnauthorizedError } from '../types/errors.js'
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
@@ -34,7 +35,7 @@ export async function login(req: Request, res: Response, next: NextFunction): Pr
 export async function refresh(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const token = req.cookies?.refreshToken as string | undefined
-    if (!token) throw new Error('No refresh token')
+    if (!token) throw new UnauthorizedError('No refresh token')
     const { accessToken } = await refreshAccessToken(token)
     res.status(200).json({ success: true, accessToken })
   } catch (error) {
