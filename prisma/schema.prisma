@@ -20,6 +20,8 @@ model User {
 
 model Job {
   id           String        @id @default(cuid())
+  source       String        @default("remotive")
+  externalId   String
   title        String
   company      String
   location     String
@@ -29,6 +31,8 @@ model Job {
   postedAt     DateTime
   createdAt    DateTime      @default(now())
   applications Application[]
+
+  @@unique([source, externalId])
 }
 
 model Application {
