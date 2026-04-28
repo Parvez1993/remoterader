@@ -1,13 +1,25 @@
 import { z } from 'zod'
+import type { Prisma } from '../generated/prisma/index.js'
 import { prisma } from '../lib/prisma.js'
 import { createStructuredOutput } from '../lib/openai.js'
 import { handlePrismaError } from '../lib/prismaErrors.js'
-import { InternalServerError } from '../types/errors.js'
-import type { RankedJobResult, RankedJobScore, RemotiveJob, RemotiveJobsResponse } from '../types/jobs.js'
-import type { FilterJobsInput } from '../validators/job.validator.js'
+import { redis } from '../lib/redis.js'
+import { BadRequestError, InternalServerError } from '../types/errors.js'
+import type {
+  JobsListCursor,
+  ListedJobResult,
+  PaginatedJobsResult,
+  RankedJobResult,
+  RankedJobScore,
+  RemotiveJob,
+  RemotiveJobsResponse,
+} from '../types/jobs.js'
+import type { FilterJobsInput, ListJobsInput } from '../validators/job.validator.js'
 
 const REMOTIVE_API_URL = process.env.REMOTIVE_API_URL ?? 'https://remotive.com/api/remote-jobs?limit=100'
 const REMOTIVE_FETCH_TIMEOUT_MS = Number(process.env.REMOTIVE_FETCH_TIMEOUT_MS ?? 10000)
+const JOBS_CACHE_TTL_SECONDS = Number(process.env.JOBS_CACHE_TTL_SECONDS ?? 300)
+const JOBS_CACHE_VERSION_KEY = 'jobs:list:version'
 const SCRAPER_SOURCE = 'remotive'
 
 const rankedJobsResponseSchema = z.object({
@@ -41,6 +53,27 @@ const rankedJobsJsonSchema = {
   required: ['rankings'],
 } satisfies Record<string, unknown>
 
+const jobsListCursorSchema = z.object({
+  id: z.string().min(1),
+  postedAt: z.string().datetime(),
+})
+
+const paginatedJobsCacheSchema = z.object({
+  jobs: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      company: z.string(),
+      location: z.string(),
+      url: z.string(),
+      salary: z.string().nullable(),
+      postedAt: z.string().datetime(),
+      applicationCount: z.number().int().min(0),
+    })
+  ),
+  nextCursor: z.string().nullable(),
+})
+
 function normalizeDescription(description: string): string {
   return description.replace(/\s+/g, ' ').trim().slice(0, 1200)
 }
@@ -68,6 +101,171 @@ function sortRankings(rankings: RankedJobResult[]): RankedJobResult[] {
     if (right.score !== left.score) return right.score - left.score
     return right.postedAt.getTime() - left.postedAt.getTime()
   })
+}
+
+function encodeJobsCursor(cursor: JobsListCursor): string {
+  return Buffer.from(JSON.stringify(cursor)).toString('base64url')
+}
+
+function decodeJobsCursor(cursor: string): JobsListCursor {
+  try {
+    const decodedValue = Buffer.from(cursor, 'base64url').toString('utf8')
+    return jobsListCursorSchema.parse(JSON.parse(decodedValue))
+  } catch {
+    throw new BadRequestError('Invalid cursor')
+  }
+}
+
+function buildJobsOrderBy(sort: ListJobsInput['sort']): Prisma.JobOrderByWithRelationInput[] {
+  const direction = sort === 'oldest' ? 'asc' : 'desc'
+
+  return [
+    { postedAt: direction },
+    { id: direction },
+  ]
+}
+
+function buildCursorWhereClause(
+  cursor: JobsListCursor,
+  sort: ListJobsInput['sort']
+): Prisma.JobWhereInput {
+  const cursorDate = new Date(cursor.postedAt)
+
+  if (sort === 'oldest') {
+    return {
+      OR: [
+        { postedAt: { gt: cursorDate } },
+        {
+          postedAt: { equals: cursorDate },
+          id: { gt: cursor.id },
+        },
+      ],
+    }
+  }
+
+  return {
+    OR: [
+      { postedAt: { lt: cursorDate } },
+      {
+        postedAt: { equals: cursorDate },
+        id: { lt: cursor.id },
+      },
+    ],
+  }
+}
+
+function buildJobsWhereInput(
+  input: ListJobsInput,
+  cursor: JobsListCursor | null
+): Prisma.JobWhereInput | undefined {
+  const conditions: Prisma.JobWhereInput[] = []
+
+  if (input.company) {
+    conditions.push({
+      company: {
+        contains: input.company,
+        mode: 'insensitive',
+      },
+    })
+  }
+
+  if (input.location) {
+    conditions.push({
+      location: {
+        contains: input.location,
+        mode: 'insensitive',
+      },
+    })
+  }
+
+  if (cursor) {
+    conditions.push(buildCursorWhereClause(cursor, input.sort))
+  }
+
+  if (conditions.length === 0) {
+    return undefined
+  }
+
+  return { AND: conditions }
+}
+
+function mapListedJob(job: {
+  id: string
+  title: string
+  company: string
+  location: string
+  url: string
+  salary: string | null
+  postedAt: Date
+  applications: Array<{
+    id: string
+  }>
+}): ListedJobResult {
+  return {
+    id: job.id,
+    title: job.title,
+    company: job.company,
+    location: job.location,
+    url: job.url,
+    salary: job.salary,
+    postedAt: job.postedAt.toISOString(),
+    applicationCount: job.applications.length,
+  }
+}
+
+async function getJobsCacheVersion(): Promise<number> {
+  try {
+    const version = await redis.get(JOBS_CACHE_VERSION_KEY)
+    const parsedVersion = Number(version ?? '1')
+    return Number.isNaN(parsedVersion) ? 1 : parsedVersion
+  } catch (error) {
+    console.error('Failed to read jobs cache version:', error)
+    return 1
+  }
+}
+
+async function buildJobsCacheKey(
+  input: ListJobsInput,
+  cursor: JobsListCursor | null
+): Promise<string> {
+  const version = await getJobsCacheVersion()
+  const cachePayload = {
+    limit: input.limit,
+    company: input.company?.toLowerCase() ?? null,
+    location: input.location?.toLowerCase() ?? null,
+    sort: input.sort,
+    cursor,
+  }
+
+  return `jobs:list:v${version}:${Buffer.from(JSON.stringify(cachePayload)).toString('base64url')}`
+}
+
+async function readJobsFromCache(cacheKey: string): Promise<PaginatedJobsResult | null> {
+  try {
+    const cachedValue = await redis.get(cacheKey)
+    if (!cachedValue) return null
+
+    return paginatedJobsCacheSchema.parse(JSON.parse(cachedValue))
+  } catch (error) {
+    console.error('Failed to read jobs list cache:', error)
+    return null
+  }
+}
+
+async function writeJobsToCache(cacheKey: string, result: PaginatedJobsResult): Promise<void> {
+  try {
+    await redis.set(cacheKey, JSON.stringify(result), 'EX', JOBS_CACHE_TTL_SECONDS)
+  } catch (error) {
+    console.error('Failed to write jobs list cache:', error)
+  }
+}
+
+export async function invalidateJobsListCache(): Promise<void> {
+  try {
+    await redis.incr(JOBS_CACHE_VERSION_KEY)
+  } catch (error) {
+    console.error('Failed to invalidate jobs list cache:', error)
+  }
 }
 
 export async function fetchRemotiveJobs(): Promise<RemotiveJob[]> {
@@ -143,11 +341,66 @@ export async function syncRemotiveJobs(): Promise<{
     )
 
     await prisma.$transaction(operations)
+    await invalidateJobsListCache()
 
     const updated = jobs.filter((job) => existingExternalIds.has(String(job.id))).length
     const created = jobs.length - updated
 
     return { fetched: jobs.length, created, updated }
+  } catch (error) {
+    handlePrismaError(error)
+  }
+}
+
+export async function listJobs(input: ListJobsInput): Promise<PaginatedJobsResult> {
+  const decodedCursor = input.cursor ? decodeJobsCursor(input.cursor) : null
+  const cacheKey = await buildJobsCacheKey(input, decodedCursor)
+  const cachedResult = await readJobsFromCache(cacheKey)
+
+  if (cachedResult) {
+    return cachedResult
+  }
+
+  try {
+    const jobs = await prisma.job.findMany({
+      relationLoadStrategy: 'join',
+      where: buildJobsWhereInput(input, decodedCursor),
+      orderBy: buildJobsOrderBy(input.sort),
+      take: input.limit + 1,
+      select: {
+        id: true,
+        title: true,
+        company: true,
+        location: true,
+        url: true,
+        salary: true,
+        postedAt: true,
+        applications: {
+          select: {
+            id: true,
+          },
+        },
+      },
+    })
+
+    const hasNextPage = jobs.length > input.limit
+    const pageJobs = hasNextPage ? jobs.slice(0, input.limit) : jobs
+    const listedJobs = pageJobs.map(mapListedJob)
+    const lastJob = pageJobs.at(-1)
+
+    const result: PaginatedJobsResult = {
+      jobs: listedJobs,
+      nextCursor: hasNextPage && lastJob
+        ? encodeJobsCursor({
+            id: lastJob.id,
+            postedAt: lastJob.postedAt.toISOString(),
+          })
+        : null,
+    }
+
+    await writeJobsToCache(cacheKey, result)
+
+    return result
   } catch (error) {
     handlePrismaError(error)
   }

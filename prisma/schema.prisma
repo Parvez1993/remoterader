@@ -1,6 +1,7 @@
 generator client {
-  provider = "prisma-client-js"
-  output   = "../src/generated/prisma"
+  provider        = "prisma-client-js"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {
@@ -33,6 +34,8 @@ model Job {
   applications Application[]
 
   @@unique([source, externalId])
+  @@index([postedAt])
+  @@index([location])
 }
 
 model Application {
