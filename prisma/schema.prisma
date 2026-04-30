@@ -34,8 +34,10 @@ model Job {
   applications Application[]
 
   @@unique([source, externalId])
-  @@index([postedAt])
+  @@index([postedAt(sort: Desc), id(sort: Desc)])
+  @@index([postedAt(sort: Asc), id(sort: Asc)])
   @@index([location])
+  @@index([company])
 }
 
 model Application {

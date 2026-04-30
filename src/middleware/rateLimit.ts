@@ -67,6 +67,12 @@ export const globalRateLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
 })
 
+export const jobsListRateLimiter = createRateLimiter({
+  keyPrefix: 'rate-limit:jobs-list',
+  limit: 60,
+  windowMs: 60 * 1000,
+})
+
 export const aiRateLimiter = createRateLimiter({
   keyPrefix: 'rate-limit:ai',
   limit: 10,
