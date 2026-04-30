@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express'
 import { ZodError } from 'zod'
 import jwt from 'jsonwebtoken'
 import { AppError } from '../types/errors.js'
+import { logger } from '../lib/logger.js'
 
 const { JsonWebTokenError, TokenExpiredError } = jwt
 
@@ -11,7 +12,7 @@ export function errorHandler(
   res: Response,
   _next: NextFunction
 ): void {
-  if (error instanceof AppError) {
+  if (error instanceof AppError && error.isOperational) {
     res.status(error.statusCode).json({ success: false, message: error.message })
     return
   }
@@ -35,6 +36,8 @@ export function errorHandler(
     return
   }
 
-  console.error('Unexpected error:', error)
+  // Programmer error — log full details server-side, never send to client
+  // In production: process.exit(1) here and let PM2/Docker restart the process
+  logger.error({ err: error }, '[PROGRAMMER ERROR]')
   res.status(500).json({ success: false, message: 'Internal server error' })
 }

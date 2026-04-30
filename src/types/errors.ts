@@ -1,6 +1,8 @@
 import { StatusCodes } from 'http-status-codes'
 
 export class AppError extends Error {
+  public readonly isOperational = true
+
   constructor(
     public readonly message: string,
     public readonly statusCode: number

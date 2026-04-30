@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express'
-import { registerSchema, loginSchema } from '../validators/auth.validator.js'
+import type { RegisterInput, LoginInput } from '../validators/auth.validator.js'
 import { registerUser, loginUser, refreshAccessToken, logoutUser } from '../services/auth.service.js'
 import type { AuthenticatedRequest } from '../middleware/authenticate.js'
 import { UnauthorizedError } from '../types/errors.js'
@@ -13,8 +13,7 @@ const COOKIE_OPTIONS = {
 
 export async function register(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const input = registerSchema.parse(req.body)
-    const { accessToken } = await registerUser(input)
+    const { accessToken } = await registerUser(req.body as RegisterInput)
     res.status(201).json({ success: true, accessToken })
   } catch (error) {
     next(error)
@@ -23,8 +22,7 @@ export async function register(req: Request, res: Response, next: NextFunction):
 
 export async function login(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const input = loginSchema.parse(req.body)
-    const { accessToken, refreshToken } = await loginUser(input)
+    const { accessToken, refreshToken } = await loginUser(req.body as LoginInput)
     res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS)
     res.status(200).json({ success: true, accessToken })
   } catch (error) {
