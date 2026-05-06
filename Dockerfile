@@ -6,6 +6,7 @@ ENV PATH=$PNPM_HOME:$PATH
 WORKDIR /app
 
 RUN corepack enable
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 COPY package.json pnpm-lock.yaml tsconfig.json prisma.config.ts ./
 COPY prisma ./prisma
@@ -25,6 +26,8 @@ ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 
 WORKDIR /app
+
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder --chown=node:node /app/package.json ./package.json
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
