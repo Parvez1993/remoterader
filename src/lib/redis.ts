@@ -1,5 +1,12 @@
 import { Redis } from 'ioredis'
+import { env } from '../config/env.js'
 
-export const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379')
+export const redis = new Redis(env.redisUrl)
 
-redis.on('error', (error) => console.error('Redis error:', error))
+redis.on('error', (error: Error) => console.error('Redis error:', error))
+
+export function createBullRedisConnection(): Redis {
+  return new Redis(env.redisUrl, {
+    maxRetriesPerRequest: null,
+  })
+}

@@ -1,11 +1,12 @@
 import 'dotenv/config'
 import { app } from './app.js'
+import { env } from './config/env.js'
 import { prisma } from './lib/prisma.js'
 import { redis } from './lib/redis.js'
 import { startRemotiveScraper } from './jobs/remotive.job.js'
-import { scoringWorker } from './jobs/scoring.worker.js'
+import { createScoringWorker } from './jobs/scoring.worker.js'
 
-const PORT = process.env.PORT ?? 3000
+let scoringWorker: ReturnType<typeof createScoringWorker> | null = null
 
 async function startServer(): Promise<void> {
   await prisma.$connect()
@@ -14,11 +15,18 @@ async function startServer(): Promise<void> {
   await redis.ping()
   console.log('Redis connected')
 
-  startRemotiveScraper()
-  console.log('Scoring worker started')
+  if (env.runScheduler) {
+    startRemotiveScraper()
+    console.log('Remotive scraper scheduled')
+  }
 
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`)
+  if (env.runScoringWorker) {
+    scoringWorker = createScoringWorker()
+    console.log('Scoring worker started')
+  }
+
+  app.listen(env.port, () => {
+    console.log(`Server running on port ${env.port}`)
   })
 }
 
@@ -33,7 +41,9 @@ process.on('unhandledRejection', (reason) => {
 })
 
 process.on('SIGTERM', async () => {
-  await scoringWorker.close()
+  if (scoringWorker) {
+    await scoringWorker.close()
+  }
   await prisma.$disconnect()
   redis.disconnect()
   process.exit(0)

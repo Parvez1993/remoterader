@@ -2,11 +2,12 @@ import type { Request, Response, NextFunction } from 'express'
 import type { RegisterInput, LoginInput } from '../validators/auth.validator.js'
 import { registerUser, loginUser, refreshAccessToken, logoutUser } from '../services/auth.service.js'
 import type { AuthenticatedRequest } from '../middleware/authenticate.js'
+import { env } from '../config/env.js'
 import { UnauthorizedError } from '../types/errors.js'
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
+  secure: env.isProduction,
   sameSite: 'strict' as const,
   maxAge: 7 * 24 * 60 * 60 * 1000,
 }
