@@ -3,6 +3,7 @@ import { app } from './app.js'
 import { prisma } from './lib/prisma.js'
 import { redis } from './lib/redis.js'
 import { startRemotiveScraper } from './jobs/remotive.job.js'
+import { scoringWorker } from './jobs/scoring.worker.js'
 
 const PORT = process.env.PORT ?? 3000
 
@@ -14,6 +15,7 @@ async function startServer(): Promise<void> {
   console.log('Redis connected')
 
   startRemotiveScraper()
+  console.log('Scoring worker started')
 
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`)
@@ -31,6 +33,7 @@ process.on('unhandledRejection', (reason) => {
 })
 
 process.on('SIGTERM', async () => {
+  await scoringWorker.close()
   await prisma.$disconnect()
   redis.disconnect()
   process.exit(0)

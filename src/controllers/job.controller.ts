@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express'
-import { filterJobsSchema, listJobsSchema } from '../validators/job.validator.js'
-import { filterJobs, listJobs } from '../services/job.service.js'
+import { filterJobsSchema, listJobsSchema, scoreJobSchema } from '../validators/job.validator.js'
+import { filterJobs, listJobs, enqueueJobScoring, getScoringStatus } from '../services/job.service.js'
 
 export async function getJobs(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -35,6 +35,33 @@ export async function filterJobsByAi(req: Request, res: Response, next: NextFunc
       count: jobs.length,
       jobs,
     })
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function scoreJob(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = scoreJobSchema.parse(req.body)
+    const scoringJobId = await enqueueJobScoring(input)
+
+    if (scoringJobId.startsWith('cached:')) {
+      res.status(200).json({ success: true, scoringJobId, status: 'done' })
+      return
+    }
+
+    res.status(202).json({ success: true, scoringJobId, status: 'pending' })
+  } catch (error) {
+    next(error)
+  }
+}
+
+export async function getScoringJobStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const scoringJobId = typeof req.params.id === 'string' ? req.params.id : req.params.id[0]
+    const result = await getScoringStatus(scoringJobId)
+
+    res.status(200).json({ success: true, ...result })
   } catch (error) {
     next(error)
   }

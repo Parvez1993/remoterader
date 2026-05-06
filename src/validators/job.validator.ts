@@ -19,5 +19,10 @@ export const listJobsSchema = z.object({
   sort: z.enum(['latest', 'oldest']).default('latest'),
 })
 
+export const scoreJobSchema = z.object({
+  jobId: z.string().min(1),
+})
+
 export type FilterJobsInput = z.infer<typeof filterJobsSchema>
 export type ListJobsInput = z.infer<typeof listJobsSchema>
+export type ScoreJobInput = z.infer<typeof scoreJobSchema>

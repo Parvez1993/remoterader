@@ -4,7 +4,8 @@ import { prisma } from '../lib/prisma.js'
 import { createStructuredOutput } from '../lib/openai.js'
 import { handlePrismaError } from '../lib/prismaErrors.js'
 import { redis } from '../lib/redis.js'
-import { BadRequestError, InternalServerError } from '../types/errors.js'
+import { scoringQueue } from '../lib/queue.js'
+import { BadRequestError, InternalServerError, NotFoundError, TooManyRequestsError } from '../types/errors.js'
 import type {
   JobsListCursor,
   ListedJobResult,
@@ -14,7 +15,7 @@ import type {
   RemotiveJob,
   RemotiveJobsResponse,
 } from '../types/jobs.js'
-import type { FilterJobsInput, ListJobsInput } from '../validators/job.validator.js'
+import type { FilterJobsInput, ListJobsInput, ScoreJobInput } from '../validators/job.validator.js'
 
 const REMOTIVE_API_URL = process.env.REMOTIVE_API_URL ?? 'https://remotive.com/api/remote-jobs?limit=100'
 const REMOTIVE_FETCH_TIMEOUT_MS = Number(process.env.REMOTIVE_FETCH_TIMEOUT_MS ?? 10000)
@@ -466,4 +467,51 @@ export async function filterJobs(input: FilterJobsInput): Promise<RankedJobResul
     .filter((job): job is RankedJobResult => job !== null)
 
   return sortRankings(rankedJobs)
+}
+
+export async function getScoringStatus(
+  scoringJobId: string
+): Promise<{ status: 'pending' | 'processing' | 'done' | 'failed'; score?: number; reason?: string }> {
+  const jobId = scoringJobId.startsWith('cached:') ? scoringJobId.replace('cached:', '') : scoringJobId
+  const resultKey = `scoring:result:${jobId}`
+  const cached = await redis.get(resultKey)
+
+  if (cached) {
+    const result = JSON.parse(cached) as { score: number; reason: string }
+    return { status: 'done', score: result.score, reason: result.reason }
+  }
+
+  const bullJob = await scoringQueue.getJob(scoringJobId)
+  if (!bullJob) throw new NotFoundError('Scoring job not found')
+
+  const state = await bullJob.getState()
+
+  if (state === 'failed') return { status: 'failed' }
+  if (state === 'active') return { status: 'processing' }
+  return { status: 'pending' }
+}
+
+export async function enqueueJobScoring(input: ScoreJobInput): Promise<string> {
+  const job = await prisma.job.findUnique({
+    where: { id: input.jobId },
+    select: { id: true },
+  })
+
+  if (!job) throw new NotFoundError('Job not found')
+
+  const existingScore = await redis.get(`scoring:result:${input.jobId}`)
+  if (existingScore) return `cached:${input.jobId}`
+
+  const bullJob = await scoringQueue.add(
+    'score-job',
+    { jobId: input.jobId },
+    {
+      attempts: 5,
+      backoff: { type: 'exponential', delay: 1000 },
+      removeOnComplete: false,
+      removeOnFail: false,
+    }
+  )
+
+  return bullJob.id!
 }
