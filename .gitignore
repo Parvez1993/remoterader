@@ -32,8 +32,9 @@ Thumbs.db
 *.swp
 *.swo
 
-# Markdown files (ignored for now as requested)
-*.md
+# Internal development notes — keep out of git
+HANDOFF.md
+PROGRESS.md
 
 # Prisma generated client
 /src/generated/prisma
