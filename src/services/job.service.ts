@@ -472,17 +472,31 @@ export async function filterJobs(input: FilterJobsInput): Promise<RankedJobResul
 export async function getScoringStatus(
   scoringJobId: string
 ): Promise<{ status: 'pending' | 'processing' | 'done' | 'failed'; score?: number; reason?: string }> {
-  const jobId = scoringJobId.startsWith('cached:') ? scoringJobId.replace('cached:', '') : scoringJobId
-  const resultKey = `scoring:result:${jobId}`
-  const cached = await redis.get(resultKey)
+  // For cached results the scoringJobId is "cached:<dbJobId>" — extract the DB job ID directly.
+  if (scoringJobId.startsWith('cached:')) {
+    const dbJobId = scoringJobId.replace('cached:', '')
+    const cached = await redis.get(`scoring:result:${dbJobId}`)
+    if (cached) {
+      const result = JSON.parse(cached) as { score: number; reason: string }
+      return { status: 'done', score: result.score, reason: result.reason }
+    }
+    // Cache expired between enqueue and status check — treat as pending
+    return { status: 'pending' }
+  }
+
+  // For a real BullMQ job ID, fetch the job first to get the DB job ID from job.data.
+  // The worker writes the result under scoring:result:<dbJobId>, not scoring:result:<bullJobId>.
+  // Without this lookup we'd be checking the wrong Redis key every time.
+  const bullJob = await scoringQueue.getJob(scoringJobId)
+  if (!bullJob) throw new NotFoundError('Scoring job not found')
+
+  const dbJobId = (bullJob.data as { jobId: string }).jobId
+  const cached = await redis.get(`scoring:result:${dbJobId}`)
 
   if (cached) {
     const result = JSON.parse(cached) as { score: number; reason: string }
     return { status: 'done', score: result.score, reason: result.reason }
   }
-
-  const bullJob = await scoringQueue.getJob(scoringJobId)
-  if (!bullJob) throw new NotFoundError('Scoring job not found')
 
   const state = await bullJob.getState()
 
