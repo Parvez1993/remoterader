@@ -38,14 +38,23 @@ export async function loginUser(input: LoginInput): Promise<{ accessToken: strin
   return { accessToken, refreshToken }
 }
 
-export async function refreshAccessToken(token: string): Promise<{ accessToken: string }> {
+export async function refreshAccessToken(
+  token: string
+): Promise<{ accessToken: string; refreshToken: string }> {
   const payload = verifyRefreshToken(token)
 
   const user = await prisma.user.findUnique({ where: { id: payload.userId } })
   if (!user || user.refreshToken !== token) throw new UnauthorizedError('Invalid refresh token')
 
   const accessToken = signAccessToken(user.id, user.role as Role)
-  return { accessToken }
+  const refreshToken = signRefreshToken(user.id)
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { refreshToken },
+  })
+
+  return { accessToken, refreshToken }
 }
 
 export async function logoutUser(userId: string): Promise<void> {

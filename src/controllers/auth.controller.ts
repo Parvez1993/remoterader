@@ -35,7 +35,8 @@ export async function refresh(req: Request, res: Response, next: NextFunction): 
   try {
     const token = typeof req.cookies?.refreshToken === 'string' ? req.cookies.refreshToken : undefined
     if (!token) throw new UnauthorizedError('No refresh token')
-    const { accessToken } = await refreshAccessToken(token)
+    const { accessToken, refreshToken } = await refreshAccessToken(token)
+    res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS)
     res.status(200).json({ success: true, accessToken })
   } catch (error) {
     next(error)
